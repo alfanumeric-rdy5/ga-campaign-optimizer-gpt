@@ -6,28 +6,30 @@ import openai
 # Load OpenAI API key
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-st.title("Campaign Optimizer GPT v4")
+st.title("Campaign Optimizer GPT v5")
 
 # Collapsible Instructions
 with st.expander("📘 How to Use This App"):
     st.markdown("""
 Upload two CSVs exported from Google Ads (e.g., last month vs. this month).  
 Required columns:
-- **Ad Group** (used to align data)
-- **CPA** (Cost per Acquisition)
-- **CTR** (Click-through Rate)
+- **Campaign**
+- **Ad Group**
+- **CPA**
+- **CTR**
 - **Cost**
 - **Conversions**
 - **Impressions**
-- *(Optional)* **Keyword** (for keyword-level analysis)
+- *(Optional)* **Keyword**
 
-Tips:
-- Format both CSVs consistently (same structure and column names)
-- Each row should represent an ad group, ad, or keyword
-- The app will:
-  - Flag statistically significant changes
-  - Suppress expected changes (e.g. spend ↓ → impressions ↓)
-  - Automatically analyze keywords if the "Keyword" column is present
+Both files must be consistent in structure.
+
+The app will:
+- Flag statistically significant changes (e.g. CPA +20%)
+- Suppress expected changes (e.g. spend ↓ → impressions ↓)
+- Show top movers
+- Auto-analyze keywords (if "Keyword" column exists)
+- Let you compare at the **Campaign** or **Ad Group** level
     """)
 
 # Upload CSVs
@@ -47,24 +49,28 @@ ctr_threshold = st.slider("Flag CTR changes over (%)", 5, 100, 15)
 
 # Optional context input
 st.subheader("Add Custom Notes (Optional)")
-custom_context = st.text_area("e.g. This was during a holiday sale or budget doubled this month.")
+custom_context = st.text_area("e.g. Budget doubled in March or new creatives launched mid-month.")
 
-def calculate_changes(current_df, previous_df):
-    merged = pd.merge(current_df, previous_df, on="Ad Group", suffixes=("_curr", "_prev"))
+# Level selector
+level = st.selectbox("Compare performance by:", ["Ad Group", "Campaign"])
+
+def calculate_changes(curr_df, prev_df, level_col):
+    merged = pd.merge(curr_df, prev_df, on=level_col, suffixes=("_curr", "_prev"))
     alerts, movers = [], []
 
-    for index, row in merged.iterrows():
+    for _, row in merged.iterrows():
         try:
             cpa_change = ((row["CPA_curr"] - row["CPA_prev"]) / row["CPA_prev"]) * 100 if row["CPA_prev"] else 0
             ctr_change = ((row["CTR_curr"] - row["CTR_prev"]) / row["CTR_prev"]) * 100 if row["CTR_prev"] else 0
             spend_change = ((row["Cost_curr"] - row["Cost_prev"]) / row["Cost_prev"]) * 100 if row["Cost_prev"] else 0
 
-            if abs(cpa_change - spend_change) < 5 and abs(ctr_change - spend_change) < 5:
+            if abs(spend_change - cpa_change) < 5 and abs(spend_change - ctr_change) < 5:
                 continue
 
             if abs(cpa_change) >= cpa_threshold or abs(ctr_change) >= ctr_threshold:
                 alerts.append({
-                    "Ad Group": row["Ad Group"],
+                    level_col: row[level_col],
+                    "Campaign": row["Campaign_curr"] if "Campaign_curr" in row else "",
                     "CPA Change (%)": round(cpa_change, 2),
                     "CTR Change (%)": round(ctr_change, 2),
                     "Spend Change (%)": round(spend_change, 2)
@@ -72,11 +78,10 @@ def calculate_changes(current_df, previous_df):
 
             if abs(cpa_change) > 0.2 or abs(ctr_change) > 0.2:
                 movers.append({
-                    "Ad Group": row["Ad Group"],
+                    level_col: row[level_col],
                     "CPA Change (%)": round(cpa_change, 2),
                     "CTR Change (%)": round(ctr_change, 2)
                 })
-
         except Exception:
             continue
 
@@ -84,6 +89,8 @@ def calculate_changes(current_df, previous_df):
     return alerts, top_movers
 
 def analyze_keywords(df):
+    if "Keyword" not in df.columns:
+        return ""
     keyword_data = df[df["Impressions"] >= 100]
     keyword_data = keyword_data.sort_values(by="Conversions", ascending=False)
     insights = []
@@ -100,16 +107,32 @@ def analyze_keywords(df):
 
 if current_file and previous_file:
     try:
-        current_df = pd.read_csv(current_file)
-        previous_df = pd.read_csv(previous_file)
+        curr_df = pd.read_csv(current_file)
+        prev_df = pd.read_csv(previous_file)
 
-        st.subheader("Change Detection")
-        alerts, top_movers_df = calculate_changes(current_df, previous_df)
+        # Basic column validation
+        required = ["CPA", "CTR", "Cost", "Conversions", "Impressions", level]
+        for col in required:
+            if col not in curr_df.columns or col not in prev_df.columns:
+                st.error(f"Missing required column: {col}")
+                st.stop()
+
+        st.subheader("Select Campaign (Optional)")
+        campaign_filter = None
+        if "Campaign" in curr_df.columns:
+            campaigns = sorted(curr_df["Campaign"].unique())
+            campaign_filter = st.selectbox("Filter by Campaign", ["All Campaigns"] + campaigns)
+            if campaign_filter != "All Campaigns":
+                curr_df = curr_df[curr_df["Campaign"] == campaign_filter]
+                prev_df = prev_df[prev_df["Campaign"] == campaign_filter]
+
+        alerts, top_movers_df = calculate_changes(curr_df, prev_df, level)
 
         if not alerts:
             st.success("No statistically significant or unexpected changes detected.")
         else:
             alert_df = pd.DataFrame(alerts)
+            st.subheader("Flagged Changes")
             st.dataframe(alert_df)
 
             if not top_movers_df.empty:
@@ -117,15 +140,12 @@ if current_file and previous_file:
                 st.dataframe(top_movers_df)
 
             alert_summary = alert_df.to_string(index=False)
-            keyword_summary = ""
-
-            if "Keyword" in current_df.columns:
-                keyword_summary = analyze_keywords(current_df)
+            keyword_summary = analyze_keywords(curr_df)
 
             prompt = f"""
 You are a digital ad performance analyst reviewing two months of Google Ads data.
 The user's target CPA is ${target_cpa:.2f} and CTR is {target_ctr:.2f}%.
-These are flagged performance changes:
+These are flagged performance changes at the {level} level:
 
 {alert_summary}
 
