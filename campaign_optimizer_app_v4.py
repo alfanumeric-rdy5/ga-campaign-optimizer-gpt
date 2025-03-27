@@ -8,7 +8,6 @@ openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 st.title("Campaign Optimizer GPT v5")
 
-# Collapsible Instructions
 with st.expander("📘 How to Use This App"):
     st.markdown("""
 Upload two CSVs exported from Google Ads (e.g., last month vs. this month).  
@@ -21,21 +20,12 @@ Required columns:
 - **Conversions**
 - **Impressions**
 - *(Optional)* **Keyword**
-
-The app will:
-- Flag statistically significant changes
-- Suppress expected spend-linked shifts
-- Show top movers
-- Auto-analyze keywords if the "Keyword" column exists
-- Let you compare at the **Campaign** or **Ad Group** level
     """)
 
-# Upload CSVs
 st.subheader("Upload Two CSV Files for Comparison")
 current_file = st.file_uploader("Current Period CSV", type="csv", key="current")
 previous_file = st.file_uploader("Previous Period CSV", type="csv", key="previous")
 
-# Goals & Settings
 st.subheader("Campaign Goals")
 target_cpa = st.number_input("Target CPA ($)", min_value=0.0, step=0.1)
 target_ctr = st.number_input("Target CTR (%)", min_value=0.0, step=0.1)
@@ -45,7 +35,7 @@ cpa_threshold = st.slider("Flag CPA changes over (%)", 5, 100, 15)
 ctr_threshold = st.slider("Flag CTR changes over (%)", 5, 100, 15)
 
 st.subheader("Add Custom Notes (Optional)")
-custom_context = st.text_area("e.g. New creatives launched mid-month.")
+custom_context = st.text_area("e.g. New landing page, Black Friday, etc.")
 
 level = st.selectbox("Compare performance by:", ["Ad Group", "Campaign"])
 
@@ -82,7 +72,10 @@ def calculate_changes(curr_df, prev_df, level_col):
 
     alert_df = pd.DataFrame(alerts)
     movers_df = pd.DataFrame(movers)
-    top_movers = movers_df.sort_values(by="CPA Change (%)", key=abs, ascending=False).head(5)
+    if not movers_df.empty and "CPA Change (%)" in movers_df.columns:
+        top_movers = movers_df.sort_values(by="CPA Change (%)", key=abs, ascending=False).head(5)
+    else:
+        top_movers = pd.DataFrame()
     return alert_df, top_movers
 
 def analyze_keywords(df):
