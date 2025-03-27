@@ -22,13 +22,11 @@ Required columns:
 - **Impressions**
 - *(Optional)* **Keyword**
 
-Both files must be consistent in structure.
-
 The app will:
-- Flag statistically significant changes (e.g. CPA +20%)
-- Suppress expected changes (e.g. spend ↓ → impressions ↓)
+- Flag statistically significant changes
+- Suppress expected spend-linked shifts
 - Show top movers
-- Auto-analyze keywords (if "Keyword" column exists)
+- Auto-analyze keywords if the "Keyword" column exists
 - Let you compare at the **Campaign** or **Ad Group** level
     """)
 
@@ -37,21 +35,18 @@ st.subheader("Upload Two CSV Files for Comparison")
 current_file = st.file_uploader("Current Period CSV", type="csv", key="current")
 previous_file = st.file_uploader("Previous Period CSV", type="csv", key="previous")
 
-# Campaign goals
-st.subheader("Set Campaign Goals")
+# Goals & Settings
+st.subheader("Campaign Goals")
 target_cpa = st.number_input("Target CPA ($)", min_value=0.0, step=0.1)
 target_ctr = st.number_input("Target CTR (%)", min_value=0.0, step=0.1)
 
-# Alert thresholds
-st.subheader("Set Alert Sensitivity")
+st.subheader("Alert Sensitivity")
 cpa_threshold = st.slider("Flag CPA changes over (%)", 5, 100, 15)
 ctr_threshold = st.slider("Flag CTR changes over (%)", 5, 100, 15)
 
-# Optional context input
 st.subheader("Add Custom Notes (Optional)")
-custom_context = st.text_area("e.g. Budget doubled in March or new creatives launched mid-month.")
+custom_context = st.text_area("e.g. New creatives launched mid-month.")
 
-# Level selector
 level = st.selectbox("Compare performance by:", ["Ad Group", "Campaign"])
 
 def calculate_changes(curr_df, prev_df, level_col):
@@ -85,8 +80,10 @@ def calculate_changes(curr_df, prev_df, level_col):
         except Exception:
             continue
 
-    top_movers = pd.DataFrame(movers).sort_values(by="CPA Change (%)", key=abs, ascending=False).head(5)
-    return alerts, top_movers
+    alert_df = pd.DataFrame(alerts)
+    movers_df = pd.DataFrame(movers)
+    top_movers = movers_df.sort_values(by="CPA Change (%)", key=abs, ascending=False).head(5)
+    return alert_df, top_movers
 
 def analyze_keywords(df):
     if "Keyword" not in df.columns:
@@ -110,7 +107,6 @@ if current_file and previous_file:
         curr_df = pd.read_csv(current_file)
         prev_df = pd.read_csv(previous_file)
 
-        # Basic column validation
         required = ["CPA", "CTR", "Cost", "Conversions", "Impressions", level]
         for col in required:
             if col not in curr_df.columns or col not in prev_df.columns:
@@ -120,18 +116,17 @@ if current_file and previous_file:
         st.subheader("Select Campaign (Optional)")
         campaign_filter = None
         if "Campaign" in curr_df.columns:
-            campaigns = sorted(curr_df["Campaign"].unique())
+            campaigns = sorted(curr_df["Campaign"].dropna().unique())
             campaign_filter = st.selectbox("Filter by Campaign", ["All Campaigns"] + campaigns)
             if campaign_filter != "All Campaigns":
                 curr_df = curr_df[curr_df["Campaign"] == campaign_filter]
                 prev_df = prev_df[prev_df["Campaign"] == campaign_filter]
 
-        alerts, top_movers_df = calculate_changes(curr_df, prev_df, level)
+        alert_df, top_movers_df = calculate_changes(curr_df, prev_df, level)
 
-        if not alerts:
+        if alert_df.empty:
             st.success("No statistically significant or unexpected changes detected.")
         else:
-            alert_df = pd.DataFrame(alerts)
             st.subheader("Flagged Changes")
             st.dataframe(alert_df)
 
